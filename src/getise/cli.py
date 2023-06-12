@@ -18,7 +18,7 @@ from re import Pattern
 import click
 import requests
 from git import Repo
-from netaddr import IPGlob
+from netaddr import IPGlob, IPNetwork, cidr_merge
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 # Turn off warnings about invalid certificates
@@ -80,6 +80,7 @@ def get_device(connection: requests.Session, url: str, id: str):
 
 def do_device(
     device,
+    cfg,
     device_re: dict[str, Pattern],
     matchgroups: dict,
     matchcpe: dict,
@@ -184,8 +185,6 @@ def cli(**cli_args):
     except JSONDecodeError as err:
         raise SystemExit(f"Unable to parse configuration file: {err}") from err
 
-    cfg = json.load(cli_args["config"])
-
     # Join and compile the regular expressions from the group matches
     #
     for gm in cfg["groupmatches"]:
@@ -255,6 +254,7 @@ def cli(**cli_args):
         for device in result["resources"]:
             do_device(
                 get_device(ise_session, url, device["id"]),
+                cfg,
                 device_regex,
                 matchgroups,
                 matchcpe,
@@ -270,6 +270,7 @@ def cli(**cli_args):
     for device in result["resources"]:
         do_device(
             get_device(ise_session, url, device["id"]),
+            cfg,
             device_regex,
             matchgroups,
             matchcpe,

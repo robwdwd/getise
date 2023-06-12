@@ -1,11 +1,10 @@
-# bgpneiget
+# getise
 
-Get BGP neighbours from network devices and output a json
-object.
+Get lists of devices from Cisco ISE.
 
 # Configuration
 
-Create a config file in ~/.config/bgpneiget/config.json
+Create a config file in ~/.config/getise/config.json
 
 ```json
 {
