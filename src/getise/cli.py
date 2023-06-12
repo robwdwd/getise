@@ -287,6 +287,7 @@ def cli(**cli_args):
     # up-to-date with everything.
     #
     origin = git_repo.remotes["origin"]
+    secondary = git_repo.remotes["secondary"]
     origin.pull()
 
     # Close and flush all the files
@@ -325,6 +326,7 @@ def cli(**cli_args):
     if git_repo.is_dirty():
         git_repo.index.commit("Get ISE Devices automated commit")
         origin.push()
+        secondary.push()
 
     ise_session.close()
 

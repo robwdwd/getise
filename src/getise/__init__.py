@@ -4,4 +4,4 @@
 # "BSD 2-Clause License". Please see the LICENSE file that should
 # have been included as part of this distribution.
 #
-__version__ = '1.0.0'
+__version__ = '1.0.1'
