@@ -1,13 +1,14 @@
 #!/usr/bin/env python3.5
 
-import click
+import json
 import os
 import pprint
 import re
-import json
+
+import click
+import requests
 from git import Repo
 from netaddr import *
-import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 # Turn off warnings about invalid certificates
@@ -154,139 +155,139 @@ def do_device(device):
 def cli(**cli_args):
 
 
-  matchgroups = {}
-  matchcpe = {}
+    matchgroups = {}
+    matchcpe = {}
 
-  # Join and compile the regular expressions from the group matches
-  #
-  for gm in cfg["groupmatches"]:
-      matchgroups[gm] = re.compile("|".join(cfg["groupmatches"][gm]))
+    # Join and compile the regular expressions from the group matches
+    #
+    for gm in cfg["groupmatches"]:
+        matchgroups[gm] = re.compile("|".join(cfg["groupmatches"][gm]))
 
-  # Group matches for CPE entries are seperate from the other groups.
-  #
-  for cm in cfg["cpematches"]:
-      matchcpe[cm] = re.compile("|".join(cfg["cpematches"][cm]))
+    # Group matches for CPE entries are seperate from the other groups.
+    #
+    for cm in cfg["cpematches"]:
+        matchcpe[cm] = re.compile("|".join(cfg["cpematches"][cm]))
 
-  # Device groups to ignore.
-  #
-  skipgroups_re = re.compile("|".join(cfg["skipgroups"]))
+    # Device groups to ignore.
+    #
+    skipgroups_re = re.compile("|".join(cfg["skipgroups"]))
 
-  # Hostnames to ignore.
-  #
-  skiphosts_re = re.compile("|".join(cfg["skiphosts"]))
+    # Hostnames to ignore.
+    #
+    skiphosts_re = re.compile("|".join(cfg["skiphosts"]))
 
-  # Skip IP ranges in CPE devices.
-  #
-  skipcpe_re = re.compile("|".join(cfg["skipcpe"]))
+    # Skip IP ranges in CPE devices.
+    #
+    skipcpe_re = re.compile("|".join(cfg["skipcpe"]))
 
-  # Any host that does have a domain ending to the hostname doesn't need another one
-  # Matching domains are here so we know if there is one or not.
-  #
-  domaincheck_re = re.compile("|".join(cfg["domaincheck"]))
+    # Any host that does have a domain ending to the hostname doesn't need another one
+    # Matching domains are here so we know if there is one or not.
+    #
+    domaincheck_re = re.compile("|".join(cfg["domaincheck"]))
 
-  # Open the raw seedfiles for writing
-  #
-  gitseedfiles = {}
+    # Open the raw seedfiles for writing
+    #
+    gitseedfiles = {}
 
-  for gs in cfg["groupseeds"]:
-      gitseedfiles[gs] = {}
-      gitseedfiles[gs]["handle"] = open(cfg["git"]["absolute_path"] + cfg["groupseeds"][gs], "w")
-      gitseedfiles[gs]["file_relative"] = cfg["git"]["relative_path"] + cfg["groupseeds"][gs]
-      gitseedfiles[gs]["file_absolute"] = cfg["git"]["absolute_path"] + cfg["groupseeds"][gs]
+    for gs in cfg["groupseeds"]:
+        gitseedfiles[gs] = {}
+        gitseedfiles[gs]["handle"] = open(cfg["git"]["absolute_path"] + cfg["groupseeds"][gs], "w")
+        gitseedfiles[gs]["file_relative"] = cfg["git"]["relative_path"] + cfg["groupseeds"][gs]
+        gitseedfiles[gs]["file_absolute"] = cfg["git"]["absolute_path"] + cfg["groupseeds"][gs]
 
-  for cs in cfg["cpeseeds"]:
-    gitseedfiles[cs] = {}
-    gitseedfiles[cs]["handle"] = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
-    gitseedfiles[cs]["file_relative"] = cfg["git"]["relative_path"] + cfg["cpeseeds"][cs]
-    gitseedfiles[cs]["file_absolute"] = cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs]
+    for cs in cfg["cpeseeds"]:
+        gitseedfiles[cs] = {}
+        gitseedfiles[cs]["handle"] = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
+        gitseedfiles[cs]["file_relative"] = cfg["git"]["relative_path"] + cfg["cpeseeds"][cs]
+        gitseedfiles[cs]["file_absolute"] = cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs]
 
-# Open the tacacs dump file
-#
-dumpfile = open(cfg["dumpfile"], "w")
-rejectfile = open(cfg["rejectfile"], "w")
+    # Open the tacacs dump file
+    #
+    dumpfile = open(cfg["dumpfile"], "w")
+    rejectfile = open(cfg["rejectfile"], "w")
 
-url = cfg["ise"]["url"]
+    url = cfg["ise"]["url"]
 
-# Open session to the ISE server.
-#
-iseSession = connect_ise(
-    url,
-    (cfg["ise"]["user"], cfg["ise"]["password"]),
-    {"Content-Type": "application/json", "Accept": "application/json"},
-)
+    # Open session to the ISE server.
+    #
+    iseSession = connect_ise(
+        url,
+        (cfg["ise"]["user"], cfg["ise"]["password"]),
+        {"Content-Type": "application/json", "Accept": "application/json"},
+    )
 
-# Get the first page of results.
-#
-page = 1
-result = get_page(iseSession, url, page)
+    # Get the first page of results.
+    #
+    page = 1
+    result = get_page(iseSession, url, page)
 
-# If there is a nextPage then continue round the loop
-#
-while "nextPage" in result:
+    # If there is a nextPage then continue round the loop
+    #
+    while "nextPage" in result:
+        for device in result["resources"]:
+            do_device(get_device(iseSession, url, device["id"]))
+
+        page = page + 1
+        result = get_page(iseSession, url, page)
+
+    # Finally catch the last page of results.
     for device in result["resources"]:
         do_device(get_device(iseSession, url, device["id"]))
 
-    page = page + 1
-    result = get_page(iseSession, url, page)
 
-# Finally catch the last page of results.
-for device in result["resources"]:
-    do_device(get_device(iseSession, url, device["id"]))
+    # Create Git repository object.
+    #
+    git_repo = Repo(cfg["git"]["basedir"])
 
+    # Pull in updates from the repository to make sure we are
+    # up-to-date with everything.
+    #
+    origin = git_repo.remotes["origin"]
+    origin.pull()
 
-# Create Git repository object.
-#
-git_repo = Repo(cfg["git"]["basedir"])
+    # Close and flush all the files
+    #
+    for open_file in gitseedfiles:
+        gitseedfiles[open_file]["handle"].flush()
+        gitseedfiles[open_file]["handle"].close()
 
-# Pull in updates from the repository to make sure we are
-# up-to-date with everything.
-#
-origin = git_repo.remotes["origin"]
-origin.pull()
+    # Sort the CPE files
+    #
+    for cs in cfg["cpeseeds"]:
+        cpeFile = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "r")
+        ipRanges = []
+        for line in cpeFile:
+            line = line.strip()
+            ipRanges.append(IPNetwork(line))
 
-# Close and flush all the files
-#
-for open_file in gitseedfiles:
-    gitseedfiles[open_file]["handle"].flush()
-    gitseedfiles[open_file]["handle"].close()
+        cpeFile.close()
 
-# Sort the CPE files
-#
-for cs in cfg["cpeseeds"]:
-    cpeFile = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "r")
-    ipRanges = []
-    for line in cpeFile:
-        line = line.strip()
-        ipRanges.append(IPNetwork(line))
+        ipSorted = cidr_merge(ipRanges)
 
-    cpeFile.close()
+        cpeFile = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
+        for cidr in ipSorted:
+            cpeFile.write(str(cidr) + "\n")
 
-    ipSorted = cidr_merge(ipRanges)
+        cpeFile.flush()
+        cpeFile.close()
 
-    cpeFile = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
-    for cidr in ipSorted:
-        cpeFile.write(str(cidr) + "\n")
+    # Stage the file in git.
+    #
+    for gitFile in gitseedfiles:
+        git_repo.index.add([gitseedfiles[gitFile]["file_relative"]])
 
-    cpeFile.flush()
-    cpeFile.close()
-
-# Stage the file in git.
-#
-for gitFile in gitseedfiles:
-    git_repo.index.add([gitseedfiles[gitFile]["file_relative"]])
-
-# If we have changed files then stage and push them.
-#
-if git_repo.is_dirty():
-    git_repo.index.commit("Get ISE Devices automated commit")
-    origin.push()
+    # If we have changed files then stage and push them.
+    #
+    if git_repo.is_dirty():
+        git_repo.index.commit("Get ISE Devices automated commit")
+        origin.push()
 
 
-iseSession.close()
+    iseSession.close()
 
-# Clean up the logging.
-#
-rejectfile.flush()
-dumpfile.flush()
-rejectfile.close()
-dumpfile.close()
+    # Clean up the logging.
+    #
+    rejectfile.flush()
+    dumpfile.flush()
+    rejectfile.close()
+    dumpfile.close()
