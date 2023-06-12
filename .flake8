@@ -1,0 +1,4 @@
+[flake8]
+max-line-length = 120
+#ignore = E128,E402,D101,D100,D102,D107
+exclude=*.egg/*

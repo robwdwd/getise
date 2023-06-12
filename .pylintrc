@@ -1,0 +1,12 @@
+[MESSAGES CONTROL]
+disable=C0111,E0211,I0011,R0914,R0912,R0915,R0913,R0904
+
+[TYPECHECK]
+# Note: This modules are manipulated during the runtime so we can't detect all the properties during
+# static analysis
+ignored-modules=distutils,eventlet.green.subprocess
+
+[FORMAT]
+max-line-length=160
+max-module-lines=1000
+indent-string='    '
