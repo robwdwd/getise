@@ -1,14 +1,23 @@
-#!/usr/bin/env python3.5
+# Copyright (c) 2023, Rob Woodward. All rights reserved.
+#
+# This file is part of Get ISE tool and is released under the
+# "BSD 2-Clause License". Please see the LICENSE file that should
+# have been included as part of this distribution.
+#
+#!/usr/bin/env python3
 
 import json
 import os
 import pprint
 import re
+from io import TextIOWrapper
+from json import JSONDecodeError
+from re import Pattern
 
 import click
 import requests
 from git import Repo
-from netaddr import *
+from netaddr import IPGlob
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
 # Turn off warnings about invalid certificates
@@ -16,9 +25,6 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
 pp = pprint.PrettyPrinter(indent=4)
-
-with open(os.environ["HOME"] + "/.cfg/getise.json") as cfgfile:
-    cfg = json.load(cfgfile)
 
 
 def join_errors(messages):
@@ -29,7 +35,7 @@ def join_errors(messages):
     return m
 
 
-def connect_ise(url, auth, headers):
+def connect_ise(auth: tuple, headers: dict) -> requests.Session:
     s = requests.Session()
     s.auth = auth
     s.headers.update(headers)
@@ -41,7 +47,7 @@ def connect_ise(url, auth, headers):
 #
 
 
-def get_page(connection, url, page):
+def get_page(connection: requests.Session, url: str, page: int):
     resp = connection.get(url, verify=False, params={"page": page, "size": 100})
 
     if resp.status_code != 200:
@@ -54,7 +60,7 @@ def get_page(connection, url, page):
 
 # Get a single device from the ISE
 #
-def get_device(connection, url, id):
+def get_device(connection: requests.Session, url: str, id: str):
     device_url = url + "/" + id
 
     resp = connection.get(device_url, verify=False)
@@ -71,8 +77,15 @@ def get_device(connection, url, id):
 #
 
 
-def do_device(device):
-
+def do_device(
+    device,
+    device_re: dict[str, Pattern],
+    matchgroups: dict,
+    matchcpe: dict,
+    gitseedfiles: dict,
+    rejectfile: TextIOWrapper,
+    dumpfile: TextIOWrapper,
+):
     if "NetworkDevice" in device:
         device = device["NetworkDevice"]
     else:
@@ -84,7 +97,7 @@ def do_device(device):
     seedgroup = None
     is_cpe = False
 
-    if skiphosts_re.match(hostname):
+    if device_re["skiphosts"].match(hostname):
         rejectfile.write("SKIPPED: [" + hostname + "] : Hostname matches skip host RE.\n")
         return
 
@@ -92,7 +105,7 @@ def do_device(device):
         if group.find("Colt_NDGs") != -1:
             groups.extend(group.split("#"))
 
-    if any(skipgroups_re.match(g) for g in groups):
+    if any(device_re["skipgroups"].match(g) for g in groups):
         rejectfile.write("SKIPPED: [" + hostname + "] : " + str(groups) + " : Matches skip RE.\n")
         return
 
@@ -105,7 +118,7 @@ def do_device(device):
     if not is_cpe:
         for gm_re in matchgroups:
             if any(matchgroups[gm_re].match(g) for g in groups):
-                if not domaincheck_re.match(hostname):
+                if not device_re["domaincheck"].match(hostname):
                     hostname = hostname + "." + cfg["groupdomains"][gm_re]
                 seedgroup = gm_re
                 break
@@ -131,32 +144,46 @@ def do_device(device):
 
     if is_cpe:
         for ip_range in ipaddress:
-            if skipcpe_re.match(ip_range):
+            if device_re["skipcpe"].match(ip_range):
                 rejectfile.write("SKIPPED: [" + ip_range + "] : IP range Matches skip CPE RE.\n")
                 continue
             dumpfile.write("hostname: " + hostname + ", Found iprange: " + str(ip_range) + "\n")
-            ipRangeCIDRs = IPGlob(ip_range).cidrs()
+            ip_range_cidrs = IPGlob(ip_range).cidrs()
             dumpfile.write(
                 "hostname: "
                 + hostname
                 + ", Converting iprange: "
                 + str(ip_range)
                 + ", cidrs: "
-                + str(ipRangeCIDRs)
+                + str(ip_range_cidrs)
                 + "\n"
             )
 
-            for cidr in ipRangeCIDRs:
+            for cidr in ip_range_cidrs:
                 gitseedfiles[seedgroup]["handle"].write(str(cidr) + "\n")
     else:
         gitseedfiles[seedgroup]["handle"].write(hostname + "\n")
 
+
 @click.command()
+@click.option(
+    "--config",
+    metavar="CONFIG_FILE",
+    help="Configuaration file to load.",
+    default=os.environ["HOME"] + "/.config/getise/config.json",
+    envvar="GETISE_CONFIG_FILE",
+    type=click.File(mode="r"),
+)
 def cli(**cli_args):
-
-
     matchgroups = {}
     matchcpe = {}
+
+    try:
+        cfg = json.load(cli_args["config"])
+    except JSONDecodeError as err:
+        raise SystemExit(f"Unable to parse configuration file: {err}") from err
+
+    cfg = json.load(cli_args["config"])
 
     # Join and compile the regular expressions from the group matches
     #
@@ -168,22 +195,23 @@ def cli(**cli_args):
     for cm in cfg["cpematches"]:
         matchcpe[cm] = re.compile("|".join(cfg["cpematches"][cm]))
 
+    device_regex: dict[str, Pattern] = {}
     # Device groups to ignore.
     #
-    skipgroups_re = re.compile("|".join(cfg["skipgroups"]))
+    device_regex["skipgroups"] = re.compile("|".join(cfg["skipgroups"]))
 
     # Hostnames to ignore.
     #
-    skiphosts_re = re.compile("|".join(cfg["skiphosts"]))
+    device_regex["skiphosts"] = re.compile("|".join(cfg["skiphosts"]))
 
     # Skip IP ranges in CPE devices.
     #
-    skipcpe_re = re.compile("|".join(cfg["skipcpe"]))
+    device_regex["skipcpe"] = re.compile("|".join(cfg["skipcpe"]))
 
     # Any host that does have a domain ending to the hostname doesn't need another one
     # Matching domains are here so we know if there is one or not.
     #
-    domaincheck_re = re.compile("|".join(cfg["domaincheck"]))
+    device_regex["domaincheck"] = re.compile("|".join(cfg["domaincheck"]))
 
     # Open the raw seedfiles for writing
     #
@@ -210,8 +238,7 @@ def cli(**cli_args):
 
     # Open session to the ISE server.
     #
-    iseSession = connect_ise(
-        url,
+    ise_session = connect_ise(
         (cfg["ise"]["user"], cfg["ise"]["password"]),
         {"Content-Type": "application/json", "Accept": "application/json"},
     )
@@ -219,21 +246,36 @@ def cli(**cli_args):
     # Get the first page of results.
     #
     page = 1
-    result = get_page(iseSession, url, page)
+    result = get_page(ise_session, url, page)
 
     # If there is a nextPage then continue round the loop
     #
     while "nextPage" in result:
         for device in result["resources"]:
-            do_device(get_device(iseSession, url, device["id"]))
+            do_device(
+                get_device(ise_session, url, device["id"]),
+                device_regex,
+                matchgroups,
+                matchcpe,
+                gitseedfiles,
+                rejectfile,
+                dumpfile,
+            )
 
         page = page + 1
-        result = get_page(iseSession, url, page)
+        result = get_page(ise_session, url, page)
 
     # Finally catch the last page of results.
     for device in result["resources"]:
-        do_device(get_device(iseSession, url, device["id"]))
-
+        do_device(
+            get_device(ise_session, url, device["id"]),
+            device_regex,
+            matchgroups,
+            matchcpe,
+            gitseedfiles,
+            rejectfile,
+            dumpfile,
+        )
 
     # Create Git repository object.
     #
@@ -254,27 +296,27 @@ def cli(**cli_args):
     # Sort the CPE files
     #
     for cs in cfg["cpeseeds"]:
-        cpeFile = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "r")
-        ipRanges = []
-        for line in cpeFile:
+        cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "r")
+        ip_ranges = []
+        for line in cpe_file:
             line = line.strip()
-            ipRanges.append(IPNetwork(line))
+            ip_ranges.append(IPNetwork(line))
 
-        cpeFile.close()
+        cpe_file.close()
 
-        ipSorted = cidr_merge(ipRanges)
+        ip_sorted = cidr_merge(ip_ranges)
 
-        cpeFile = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
-        for cidr in ipSorted:
-            cpeFile.write(str(cidr) + "\n")
+        cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
+        for cidr in ip_sorted:
+            cpe_file.write(str(cidr) + "\n")
 
-        cpeFile.flush()
-        cpeFile.close()
+        cpe_file.flush()
+        cpe_file.close()
 
     # Stage the file in git.
     #
-    for gitFile in gitseedfiles:
-        git_repo.index.add([gitseedfiles[gitFile]["file_relative"]])
+    for git_file in gitseedfiles:
+        git_repo.index.add([gitseedfiles[git_file]["file_relative"]])
 
     # If we have changed files then stage and push them.
     #
@@ -282,8 +324,7 @@ def cli(**cli_args):
         git_repo.index.commit("Get ISE Devices automated commit")
         origin.push()
 
-
-    iseSession.close()
+    ise_session.close()
 
     # Clean up the logging.
     #
