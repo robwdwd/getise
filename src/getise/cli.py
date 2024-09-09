@@ -238,7 +238,7 @@ def process_seedfiles(gitseedfiles: dict):
             else:
                 shutil.copy(file_info["handle"].name, file_info["file_absolute"])
         else:
-            raise GetISEException(f"Found raw seedfile with zero size: {file_info["handle"].name}")
+            raise GetISEException(f"Found raw seedfile with zero size: {file_info['handle'].name}")
 
 
 def close_seedfiles(gitseedfiles: dict):
