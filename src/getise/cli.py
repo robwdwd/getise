@@ -192,13 +192,17 @@ def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe
 
     for gs in group_seeds:
         gitseedfiles[gs] = {}
-        gitseedfiles[gs]["handle"] = tempfile.NamedTemporaryFile(dir=absolute_path, prefix=gs, suffix=".tmp" )
+        gitseedfiles[gs]["handle"] = tempfile.NamedTemporaryFile(
+            dir=absolute_path, prefix=f"{gs}-", suffix=".tmp", mode="w+t"
+        )
         gitseedfiles[gs]["file_relative"] = relative_path + group_seeds[gs]
         gitseedfiles[gs]["file_absolute"] = absolute_path + group_seeds[gs]
 
     for cs in cpe_seeds:
         gitseedfiles[cs] = {}
-        gitseedfiles[cs]["handle"] = tempfile.NamedTemporaryFile(dir=absolute_path, prefix=cs, suffix=".tmp")
+        gitseedfiles[cs]["handle"] = tempfile.NamedTemporaryFile(
+            dir=absolute_path, prefix=f"{cs}-", suffix=".tmp", mode="w+t"
+        )
         gitseedfiles[cs]["file_relative"] = relative_path + cpe_seeds[cs]
         gitseedfiles[cs]["file_absolute"] = absolute_path + cpe_seeds[cs]
 
@@ -279,10 +283,6 @@ def cli(**cli_args):
     #
     page = 1
     result = get_page(ise_session, url, page)
-
-
-
-   
 
     # If there is a nextPage then continue round the loop
     #
