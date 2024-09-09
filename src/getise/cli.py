@@ -264,6 +264,8 @@ def cli(**cli_args):
 
     pp.pprint(gitseedfiles)
 
+    time.sleep(30)
+
     url = cfg["ise"]["url"]
 
     # Open session to the ISE server.
