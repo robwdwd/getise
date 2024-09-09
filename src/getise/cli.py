@@ -12,6 +12,7 @@ import os
 import pprint
 import re
 import tempfile
+import time
 from io import TextIOWrapper
 from json import JSONDecodeError
 from re import Pattern
@@ -262,6 +263,8 @@ def cli(**cli_args):
     )
 
     pp.pprint(gitseedfiles)
+
+    time.sleep(30)
 
     raise SystemExit('quit')
 
