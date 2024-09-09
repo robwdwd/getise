@@ -268,6 +268,11 @@ def cli(**cli_args):
 
     pp.pprint(gitseedfiles)
 
+        # Close and flush all the files
+    #
+    for open_file in gitseedfiles:
+        pp.pprint(gitseedfiles[open_file]["handle"].name)
+
     time.sleep(30)
 
     url = cfg["ise"]["url"]
@@ -329,6 +334,7 @@ def cli(**cli_args):
     # Close and flush all the files
     #
     for open_file in gitseedfiles:
+        pp.pprint(gitseedfiles[open_file]["handle"].name)
         gitseedfiles[open_file]["handle"].flush()
         gitseedfiles[open_file]["handle"].close()
 
