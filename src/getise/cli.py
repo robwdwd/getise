@@ -334,8 +334,10 @@ def cli(**cli_args):
     # Close and flush all the files
     #
     for open_file in gitseedfiles:
-        pp.pprint(gitseedfiles[open_file]["handle"].name)
+        tmp_filename = gitseedfiles[open_file]["handle"].name
+        print(f"File size of {tmp_filename} is {os.path.getsize(tmp_filename)} bytes\n")
         gitseedfiles[open_file]["handle"].flush()
+        print(f"File size of {tmp_filename} is {os.path.getsize(tmp_filename)} bytes\n")
         gitseedfiles[open_file]["handle"].close()
 
     # Sort the CPE files
