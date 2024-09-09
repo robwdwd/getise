@@ -353,6 +353,7 @@ def cli(**cli_args):
             cpe_file.flush()
             cpe_file.close()
     except GetISEException as error:
+        time.sleep(30)
         raise SystemExit(f"Aborting due to error: {error}")
     finally:
         close_seedfiles(gitseedfiles)
