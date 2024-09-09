@@ -191,13 +191,13 @@ def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe
 
     for gs in group_seeds:
         gitseedfiles[gs] = {}
-        gitseedfiles[gs]["handle"] = tempfile.TemporaryFile(dir=relative_path, prefix=gs, suffix=".tmp")
+        gitseedfiles[gs]["handle"] = tempfile.TemporaryFile(dir=absolute_path, prefix=gs, suffix=".tmp")
         gitseedfiles[gs]["file_relative"] = relative_path + group_seeds[gs]
         gitseedfiles[gs]["file_absolute"] = absolute_path + group_seeds[gs]
 
     for cs in cpe_seeds:
         gitseedfiles[cs] = {}
-        gitseedfiles[cs]["handle"] = tempfile.TemporaryFile(dir=relative_path, prefix=cs, suffix=".tmp")
+        gitseedfiles[cs]["handle"] = tempfile.TemporaryFile(dir=absolute_path, prefix=cs, suffix=".tmp")
         gitseedfiles[cs]["file_relative"] = relative_path + cpe_seeds[cs]
         gitseedfiles[cs]["file_absolute"] = absolute_path + cpe_seeds[cs]
 
