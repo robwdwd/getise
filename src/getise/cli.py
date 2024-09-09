@@ -11,6 +11,8 @@ import json
 import os
 import pprint
 import re
+import shutil
+import sys
 import tempfile
 import time
 from io import TextIOWrapper
@@ -209,6 +211,21 @@ def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe
     return gitseedfiles
 
 
+def process_seedfiles(gitseedfiles: dict):
+    for file_info in gitseedfiles.values():
+        file_info["handle"].flush()
+
+        if os.path.getsize(file_info["handle"].name) > 0:
+            shutil.copy(file_info["handle"].name, file_info["file_absolute"])
+        else:
+            raise GetISEException("Found raw seedfile with zero size")
+
+
+def close_seedfiles(gitseedfiles: dict):
+    for file_info in gitseedfiles.values():
+        file_info["handle"].close()
+
+
 @click.command()
 @click.option(
     "--config",
@@ -268,30 +285,40 @@ def cli(**cli_args):
 
     pp.pprint(gitseedfiles)
 
-        # Close and flush all the files
-    #
-    for open_file in gitseedfiles:
-        pp.pprint(gitseedfiles[open_file]["handle"].name)
+    try:
+        url = cfg["ise"]["url"]
 
-    time.sleep(30)
+        # Open session to the ISE server.
+        #
+        ise_session = connect_ise(
+            (cfg["ise"]["user"], cfg["ise"]["password"]),
+            {"Content-Type": "application/json", "Accept": "application/json"},
+        )
 
-    url = cfg["ise"]["url"]
+        # Get the first page of results.
+        #
+        page = 1
+        result = get_page(ise_session, url, page)
 
-    # Open session to the ISE server.
-    #
-    ise_session = connect_ise(
-        (cfg["ise"]["user"], cfg["ise"]["password"]),
-        {"Content-Type": "application/json", "Accept": "application/json"},
-    )
+        # If there is a nextPage then continue round the loop
+        #
+        while "nextPage" in result:
+            for device in result["resources"]:
+                do_device(
+                    get_device(ise_session, url, device["id"]),
+                    cfg,
+                    device_regex,
+                    matchgroups,
+                    matchcpe,
+                    gitseedfiles,
+                    rejectfile,
+                    dumpfile,
+                )
 
-    # Get the first page of results.
-    #
-    page = 1
-    result = get_page(ise_session, url, page)
+            page = page + 1
+            result = get_page(ise_session, url, page)
 
-    # If there is a nextPage then continue round the loop
-    #
-    while "nextPage" in result:
+        # Finally catch the last page of results.
         for device in result["resources"]:
             do_device(
                 get_device(ise_session, url, device["id"]),
@@ -304,21 +331,33 @@ def cli(**cli_args):
                 dumpfile,
             )
 
-        page = page + 1
-        result = get_page(ise_session, url, page)
+        process_seedfiles(gitseedfiles)
 
-    # Finally catch the last page of results.
-    for device in result["resources"]:
-        do_device(
-            get_device(ise_session, url, device["id"]),
-            cfg,
-            device_regex,
-            matchgroups,
-            matchcpe,
-            gitseedfiles,
-            rejectfile,
-            dumpfile,
-        )
+        # Sort the CPE files
+        #
+        for cs in cfg["cpeseeds"]:
+            cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "r")
+            ip_ranges = []
+            for line in cpe_file:
+                line = line.strip()
+                ip_ranges.append(IPNetwork(line))
+
+            cpe_file.close()
+
+            ip_sorted = cidr_merge(ip_ranges)
+
+            cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
+            for cidr in ip_sorted:
+                cpe_file.write(str(cidr) + "\n")
+
+            cpe_file.flush()
+            cpe_file.close()
+    except GetISEException as error:
+        raise SystemExit(f"Aborting due to error: {error}")
+    finally:
+        close_seedfiles(gitseedfiles)
+
+    sys.exit()
 
     # Create Git repository object.
     #
@@ -330,35 +369,6 @@ def cli(**cli_args):
     origin = git_repo.remotes["origin"]
     secondary = git_repo.remotes["secondary"]
     origin.pull()
-
-    # Close and flush all the files
-    #
-    for open_file in gitseedfiles:
-        tmp_filename = gitseedfiles[open_file]["handle"].name
-        print(f"File size of {tmp_filename} is {os.path.getsize(tmp_filename)} bytes\n")
-        gitseedfiles[open_file]["handle"].flush()
-        print(f"File size of {tmp_filename} is {os.path.getsize(tmp_filename)} bytes\n")
-        gitseedfiles[open_file]["handle"].close()
-
-    # Sort the CPE files
-    #
-    for cs in cfg["cpeseeds"]:
-        cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "r")
-        ip_ranges = []
-        for line in cpe_file:
-            line = line.strip()
-            ip_ranges.append(IPNetwork(line))
-
-        cpe_file.close()
-
-        ip_sorted = cidr_merge(ip_ranges)
-
-        cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
-        for cidr in ip_sorted:
-            cpe_file.write(str(cidr) + "\n")
-
-        cpe_file.flush()
-        cpe_file.close()
 
     # Stage the file in git.
     #
