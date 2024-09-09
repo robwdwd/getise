@@ -128,7 +128,7 @@ def do_device(
             groups.extend(group.split("#"))
 
     if any(device_re["skipgroups"].match(g) for g in groups):
-        rejectfile.write(f"SKIPPED: [{hostname}] : {str(groups)}" + " : Matches skip RE.\n")
+        rejectfile.write(f"SKIPPED: [{hostname}] : {groups} : Matches skip RE.\n")
         return
 
     for cm_re in matchcpe:
@@ -146,7 +146,7 @@ def do_device(
                 break
 
     if not seedgroup:
-        rejectfile.write("REJECTED: [" + hostname + "] : " + str(groups) + " : Group match not found.\n")
+        rejectfile.write(f"REJECTED: [{hostname}] : {groups} : Group match not found.\n")
         return
 
     for ipaddr in device["NetworkDeviceIPList"]:
@@ -167,9 +167,9 @@ def do_device(
     if is_cpe:
         for ip_range in ipaddress:
             if device_re["skipcpe"].match(ip_range):
-                rejectfile.write("SKIPPED: [" + ip_range + "] : IP range Matches skip CPE RE.\n")
+                rejectfile.write(f"SKIPPED: [{ip_range}] : IP range Matches skip CPE RE.\n")
                 continue
-            dumpfile.write("hostname: " + hostname + ", Found iprange: " + str(ip_range) + "\n")
+            dumpfile.write(f"hostname: {hostname}, Found iprange: {ip_range}\n")
             ip_range_cidrs = IPGlob(ip_range).cidrs()
             dumpfile.write(
                 "hostname: "
