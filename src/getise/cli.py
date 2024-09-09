@@ -11,6 +11,7 @@ import json
 import os
 import pprint
 import re
+import tempfile
 from io import TextIOWrapper
 from json import JSONDecodeError
 from re import Pattern
@@ -21,6 +22,8 @@ from git import Repo
 from netaddr import IPGlob, IPNetwork, cidr_merge
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
 
+from getise.exceptions import GetISEException
+
 # Turn off warnings about invalid certificates
 #
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
@@ -29,14 +32,24 @@ pp = pprint.PrettyPrinter(indent=4)
 
 
 def join_errors(messages):
-    m = ""
-    for message in messages:
-        m = m + ":" + message["title"]
-
-    return m
+    return ":".join(message["title"] for message in messages)
 
 
 def connect_ise(auth: tuple, headers: dict) -> requests.Session:
+    """
+    Establishes a connection to the ISE server using the provided authentication and headers.
+
+    This function creates a new `requests.Session` object, sets the authentication credentials,
+    and updates the session headers with the provided values. It returns the configured session
+    ready for making requests to the ISE server.
+
+    Args:
+        auth (tuple): A tuple containing the authentication credentials.
+        headers (dict): A dictionary of headers to be included in the session.
+
+    Returns:
+        requests.Session: A configured requests session for connecting to the ISE server.
+    """
     s = requests.Session()
     s.auth = auth
     s.headers.update(headers)
@@ -46,38 +59,42 @@ def connect_ise(auth: tuple, headers: dict) -> requests.Session:
 
 # Get 1 page of devices from the ISE
 #
-
-
 def get_page(connection: requests.Session, url: str, page: int):
-    resp = connection.get(url, verify=False, params={"page": page, "size": 100})
+    try:
+        resp = connection.get(url, verify=False, params={"page": page, "size": 100})
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as err:
+        raise GetISEException(f"Unable to get respose from the ISE server: {err}") from err
 
     if resp.status_code != 200:
         result = resp.json()
         error = join_errors(result["ERSResponse"]["messages"])
-        raise Exception("GET-All-Devices: {} {}".format(resp.status_code, error))
+        raise GetISEException(f"GET-All-Devices: {resp.status_code} {error}")
 
     return resp.json()["SearchResult"]
 
 
 # Get a single device from the ISE
 #
-def get_device(connection: requests.Session, url: str, id: str):
-    device_url = url + "/" + id
+def get_device(connection: requests.Session, url: str, device_id: str):
+    device_url = f"{url}/{device_id}"
 
-    resp = connection.get(device_url, verify=False)
+    try:
+        resp = connection.get(device_url, verify=False)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as err:
+        raise GetISEException(f"Unable to get respose from the ISE server: {err}") from err
 
     if resp.status_code != 200:
         result = resp.json()
         error = join_errors(result["ERSResponse"]["messages"])
-        raise Exception("GET-Device: {} {}".format(resp.status_code, error))
+        raise GetISEException(f"GET-Device: {resp.status_code} {error}")
 
     return resp.json()
 
 
 # Work out which seedfile the device belongs too or reject it.
 #
-
-
 def do_device(
     device,
     cfg,
@@ -100,7 +117,7 @@ def do_device(
     is_cpe = False
 
     if device_re["skiphosts"].match(hostname):
-        rejectfile.write("SKIPPED: [" + hostname + "] : Hostname matches skip host RE.\n")
+        rejectfile.write(f"SKIPPED: [{hostname}] : Hostname matches skip host RE.\n")
         return
 
     for group in device["NetworkDeviceGroupList"]:
@@ -108,7 +125,7 @@ def do_device(
             groups.extend(group.split("#"))
 
     if any(device_re["skipgroups"].match(g) for g in groups):
-        rejectfile.write("SKIPPED: [" + hostname + "] : " + str(groups) + " : Matches skip RE.\n")
+        rejectfile.write(f"SKIPPED: [{hostname}] : {str(groups)}" + " : Matches skip RE.\n")
         return
 
     for cm_re in matchcpe:
@@ -167,6 +184,26 @@ def do_device(
         gitseedfiles[seedgroup]["handle"].write(hostname + "\n")
 
 
+def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe_seeds: dict) -> dict:
+    # Open the raw seedfiles for writing
+    #
+    gitseedfiles = {}
+
+    for gs in group_seeds:
+        gitseedfiles[gs] = {}
+        gitseedfiles[gs]["handle"] = tempfile.TemporaryFile(dir=relative_path, prefix=gs, suffix=".tmp")
+        gitseedfiles[gs]["file_relative"] = relative_path + group_seeds[gs]
+        gitseedfiles[gs]["file_absolute"] = absolute_path + group_seeds[gs]
+
+    for cs in cpe_seeds:
+        gitseedfiles[cs] = {}
+        gitseedfiles[cs]["handle"] = tempfile.TemporaryFile(dir=relative_path, prefix=cs, suffix=".tmp")
+        gitseedfiles[cs]["file_relative"] = relative_path + cpe_seeds[cs]
+        gitseedfiles[cs]["file_absolute"] = absolute_path + cpe_seeds[cs]
+
+    return gitseedfiles
+
+
 @click.command()
 @click.option(
     "--config",
@@ -213,26 +250,20 @@ def cli(**cli_args):
     #
     device_regex["domaincheck"] = re.compile("|".join(cfg["domaincheck"]))
 
-    # Open the raw seedfiles for writing
-    #
-    gitseedfiles = {}
-
-    for gs in cfg["groupseeds"]:
-        gitseedfiles[gs] = {}
-        gitseedfiles[gs]["handle"] = open(cfg["git"]["absolute_path"] + cfg["groupseeds"][gs], "w")
-        gitseedfiles[gs]["file_relative"] = cfg["git"]["relative_path"] + cfg["groupseeds"][gs]
-        gitseedfiles[gs]["file_absolute"] = cfg["git"]["absolute_path"] + cfg["groupseeds"][gs]
-
-    for cs in cfg["cpeseeds"]:
-        gitseedfiles[cs] = {}
-        gitseedfiles[cs]["handle"] = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
-        gitseedfiles[cs]["file_relative"] = cfg["git"]["relative_path"] + cfg["cpeseeds"][cs]
-        gitseedfiles[cs]["file_absolute"] = cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs]
-
     # Open the tacacs dump file
     #
     dumpfile = open(cfg["dumpfile"], "w")
     rejectfile = open(cfg["rejectfile"], "w")
+
+    # Open the raw seedfiles for writing
+    #
+    gitseedfiles = get_seedfiles(
+        cfg["git"]["absolute_path"], cfg["git"]["relative_path"], cfg["groupseeds"], cfg["cpeseeds"]
+    )
+
+    pp.pprint(gitseedfiles)
+
+    raise SystemExit('quit')
 
     url = cfg["ise"]["url"]
 
@@ -247,6 +278,10 @@ def cli(**cli_args):
     #
     page = 1
     result = get_page(ise_session, url, page)
+
+
+
+   
 
     # If there is a nextPage then continue round the loop
     #

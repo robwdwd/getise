@@ -1,0 +1,2 @@
+class GetISEException(Exception):
+    pass
