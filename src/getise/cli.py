@@ -182,7 +182,7 @@ def do_device(
             for cidr in ip_range_cidrs:
                 gitseedfiles[seedgroup]["handle"].write(str(cidr) + "\n")
     else:
-        gitseedfiles[seedgroup]["handle"].write(hostname + "\n")
+        gitseedfiles[seedgroup]["handle"].write(f"{hostname}\n")
 
 
 def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe_seeds: dict) -> dict:
