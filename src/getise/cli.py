@@ -194,6 +194,7 @@ def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe
 
     for gs in group_seeds:
         gitseedfiles[gs] = {}
+        gitseedfiles[gs]["is_cpe"] = False
         gitseedfiles[gs]["handle"] = tempfile.NamedTemporaryFile(
             dir=absolute_path, prefix=f"{gs}-", suffix=".tmp", mode="w+t"
         )
@@ -202,6 +203,7 @@ def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe
 
     for cs in cpe_seeds:
         gitseedfiles[cs] = {}
+        gitseedfiles[cs]["is_cpe"] = True
         gitseedfiles[cs]["handle"] = tempfile.NamedTemporaryFile(
             dir=absolute_path, prefix=f"{cs}-", suffix=".tmp", mode="w+t"
         )
@@ -210,15 +212,33 @@ def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe
 
     return gitseedfiles
 
+def sort_cpe_file(source_file: tempfile._TemporaryFileWrapper, destination_filename: str):
+
+    source_file.seek(0)
+    ip_ranges = []
+    for line in source_file:
+        line = line.strip()
+        ip_ranges.append(IPNetwork(line))
+
+    ip_sorted = cidr_merge(ip_ranges)
+
+    with open(destination_filename, "w") as cpe_file:
+        for cidr in ip_sorted:
+            cpe_file.write(str(cidr) + "\n")
+        cpe_file.flush()
+
 
 def process_seedfiles(gitseedfiles: dict):
     for file_info in gitseedfiles.values():
         file_info["handle"].flush()
 
         if os.path.getsize(file_info["handle"].name) > 0:
-            shutil.copy(file_info["handle"].name, file_info["file_absolute"])
+            if file_info['is_cpe']:
+                sort_cpe_file(file_info["handle"], file_info["file_absolute"])
+            else:
+                shutil.copy(file_info["handle"].name, file_info["file_absolute"])
         else:
-            raise GetISEException("Found raw seedfile with zero size")
+            raise GetISEException(f"Found raw seedfile with zero size: {file_info["handle"].name}")
 
 
 def close_seedfiles(gitseedfiles: dict):
@@ -333,25 +353,7 @@ def cli(**cli_args):
 
         process_seedfiles(gitseedfiles)
 
-        # Sort the CPE files
-        #
-        for cs in cfg["cpeseeds"]:
-            cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "r")
-            ip_ranges = []
-            for line in cpe_file:
-                line = line.strip()
-                ip_ranges.append(IPNetwork(line))
 
-            cpe_file.close()
-
-            ip_sorted = cidr_merge(ip_ranges)
-
-            cpe_file = open(cfg["git"]["absolute_path"] + cfg["cpeseeds"][cs], "w")
-            for cidr in ip_sorted:
-                cpe_file.write(str(cidr) + "\n")
-
-            cpe_file.flush()
-            cpe_file.close()
     except GetISEException as error:
         time.sleep(30)
         raise SystemExit(f"Aborting due to error: {error}")
