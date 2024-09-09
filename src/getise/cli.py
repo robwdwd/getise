@@ -188,60 +188,104 @@ def do_device(
 
 
 def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe_seeds: dict) -> dict:
-    # Open the raw seedfiles for writing
-    #
+    """
+    Creates temporary seed files for both group and CPE seeds and returns a dictionary of their handles.
+
+    This function initializes temporary files for each seed in the provided group and CPE dictionaries,
+    storing relevant metadata such as file paths and whether the seed is a CPE list.
+
+    Args:
+        absolute_path (str): The absolute path where the temporary files will be created.
+        relative_path (str): The relative path to be prepended to the seed file names.
+        group_seeds (dict): A dictionary containing group names and their corresponding file names.
+        cpe_seeds (dict): A dictionary containing CPE group names and their corresponding file names.
+
+    Returns:
+        dict: A dictionary mapping group names to their file information, including handles and paths.
+    """
     gitseedfiles = {}
 
-    for gs in group_seeds:
-        gitseedfiles[gs] = {}
-        gitseedfiles[gs]["is_cpe"] = False
-        gitseedfiles[gs]["handle"] = tempfile.NamedTemporaryFile(
-            dir=absolute_path, prefix=f"{gs}-", suffix=".tmp", mode="w+t"
-        )
-        gitseedfiles[gs]["file_relative"] = relative_path + group_seeds[gs]
-        gitseedfiles[gs]["file_absolute"] = absolute_path + group_seeds[gs]
-
-    for cs in cpe_seeds:
-        gitseedfiles[cs] = {}
-        gitseedfiles[cs]["is_cpe"] = True
-        gitseedfiles[cs]["handle"] = tempfile.NamedTemporaryFile(
-            dir=absolute_path, prefix=f"{cs}-", suffix=".tmp", mode="w+t"
-        )
-        gitseedfiles[cs]["file_relative"] = relative_path + cpe_seeds[cs]
-        gitseedfiles[cs]["file_absolute"] = absolute_path + cpe_seeds[cs]
+    for seeds, is_cpe in [(group_seeds, False), (cpe_seeds, True)]:
+        for group_name, file_name in seeds.items():
+            gitseedfiles[group_name] = {
+                "is_cpe": is_cpe,
+                "handle": tempfile.NamedTemporaryFile(
+                    dir=absolute_path, prefix=f"{file_name}-", suffix=".tmp", mode="w+t"
+                ),
+                "file_relative": relative_path + file_name,
+                "file_absolute": absolute_path + file_name,
+            }
 
     return gitseedfiles
 
+
 def sort_cpe_file(source_file: tempfile._TemporaryFileWrapper, destination_filename: str):
+    """
+    Sorts IP address ranges from a source file and writes the sorted ranges to a destination file.
 
+    This function reads IP address ranges from a temporary source file, processes them to merge
+    overlapping ranges, and writes the sorted results to a specified destination file.
+
+    Args:
+        source_file (tempfile._TemporaryFileWrapper): A temporary file object containing IP address ranges.
+        destination_filename (str): The path to the destination file where sorted IP ranges will be written.
+
+    Returns:
+        None
+    """
     source_file.seek(0)
-    ip_ranges = []
-    for line in source_file:
-        line = line.strip()
-        ip_ranges.append(IPNetwork(line))
 
+    ip_ranges = [IPNetwork(line.strip()) for line in source_file]
     ip_sorted = cidr_merge(ip_ranges)
 
     with open(destination_filename, "w") as cpe_file:
         for cidr in ip_sorted:
             cpe_file.write(str(cidr) + "\n")
-        cpe_file.flush()
 
 
 def process_seedfiles(gitseedfiles: dict):
+    """
+    Copies the temporary seedfiles to the final destination. If seedfiles
+    is a list of CPE devices it sorts this list first.
+
+    Args:
+        gitseedfiles (dict): A dictionary containing file information, where each
+                             value is expected to have a "handle" key pointing
+                             to an open file object, an "is_cpe" key indicating
+                             the device type contained in the file, and a "file_absolute"
+                             key for the destination path.
+
+    Raises:
+        GetISEException: If a seed file is found with zero size.
+
+    Returns:
+        None
+    """
     for file_info in gitseedfiles.values():
         file_info["handle"].flush()
+        handle_name = file_info["handle"].name
 
-        if os.path.getsize(file_info["handle"].name) > 0:
-            if file_info['is_cpe']:
-                sort_cpe_file(file_info["handle"], file_info["file_absolute"])
-            else:
-                shutil.copy(file_info["handle"].name, file_info["file_absolute"])
+        if os.path.getsize(handle_name) <= 0:
+            raise GetISEException(f"Found raw seedfile with zero size: {handle_name}")
+
+        if file_info["is_cpe"]:
+            sort_cpe_file(file_info["handle"], file_info["file_absolute"])
         else:
-            raise GetISEException(f"Found raw seedfile with zero size: {file_info['handle'].name}")
+            shutil.copy(handle_name, file_info["file_absolute"])
 
 
 def close_seedfiles(gitseedfiles: dict):
+    """
+    Closes all file handles in the provided dictionary of seed files.
+
+    Args:
+        gitseedfiles (dict): A dictionary containing file information, where each
+                             value is expected to have a "handle" key pointing
+                             to an open file object.
+
+    Returns:
+        None
+    """
     for file_info in gitseedfiles.values():
         file_info["handle"].close()
 
@@ -352,7 +396,6 @@ def cli(**cli_args):
             )
 
         process_seedfiles(gitseedfiles)
-
 
     except GetISEException as error:
         time.sleep(30)
