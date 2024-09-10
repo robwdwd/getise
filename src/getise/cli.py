@@ -93,24 +93,24 @@ def get_device(connection: requests.Session, url: str, device_id: str):
 
 
 def find_seedgroup_and_is_cpe(
-    matchgroups: dict[str, Pattern],
-    matchcpe: dict[str, Pattern],
+    group_matches: dict[str, Pattern],
+    cpe_group_matches: dict[str, Pattern],
     groups: list,
 ):
-    for cm_re, pattern in matchcpe.items():
+    for cpe_group_name, pattern in cpe_group_matches.items():
         if any(pattern.match(g) for g in groups):
-            return cm_re, True
-    for gm_re, pattern in matchgroups.items():
+            return cpe_group_name, True
+    for group_name, pattern in group_matches.items():
         if any(pattern.match(g) for g in groups):
-            return gm_re, False
+            return group_name, False
     return None, False
 
 def do_device(
     device,
     cfg,
     device_re: dict[str, Pattern],
-    matchgroups: dict[str, Pattern],
-    matchcpe: dict[str, Pattern],
+    group_matches: dict[str, Pattern],
+    cpe_group_matches: dict[str, Pattern],
     gitseedfiles: dict,
     rejectfile: TextIOWrapper,
     dumpfile: TextIOWrapper,
@@ -133,7 +133,7 @@ def do_device(
         rejectfile.write(f"SKIPPED: [{hostname}] : {groups} : Matches skip RE.\n")
         return
 
-    seedgroup, is_cpe = find_seedgroup_and_is_cpe(matchgroups, matchcpe, groups)
+    seedgroup, is_cpe = find_seedgroup_and_is_cpe(group_matches, cpe_group_matches, groups)
 
     if not seedgroup:
         rejectfile.write(f"REJECTED: [{hostname}] : {groups} : Group match not found.\n")
@@ -270,23 +270,24 @@ def close_seedfiles(gitseedfiles: dict):
     type=click.File(mode="r"),
 )
 def cli(**cli_args):
-    matchgroups = {}
-    matchcpe = {}
 
     try:
         cfg = json.load(cli_args["config"])
     except JSONDecodeError as err:
         raise SystemExit(f"Unable to parse configuration file: {err}") from err
 
+    group_matches: dict[str, Pattern] = {}
+    cpe_group_matches: dict[str, Pattern] = {}
+
     # Join and compile the regular expressions from the group matches
     #
     for gm in cfg["groupmatches"]:
-        matchgroups[gm] = re.compile("|".join(cfg["groupmatches"][gm]))
+        group_matches[gm] = re.compile("|".join(cfg["groupmatches"][gm]))
 
     # Group matches for CPE entries are seperate from the other groups.
     #
     for cm in cfg["cpematches"]:
-        matchcpe[cm] = re.compile("|".join(cfg["cpematches"][cm]))
+        cpe_group_matches[cm] = re.compile("|".join(cfg["cpematches"][cm]))
 
     device_regex: dict[str, Pattern] = {}
     # Device groups to ignore.
@@ -342,8 +343,8 @@ def cli(**cli_args):
                     get_device(ise_session, url, device["id"]),
                     cfg,
                     device_regex,
-                    matchgroups,
-                    matchcpe,
+                    group_matches,
+                    cpe_group_matches,
                     gitseedfiles,
                     rejectfile,
                     dumpfile,
@@ -358,8 +359,8 @@ def cli(**cli_args):
                 get_device(ise_session, url, device["id"]),
                 cfg,
                 device_regex,
-                matchgroups,
-                matchcpe,
+                group_matches,
+                cpe_group_matches,
                 gitseedfiles,
                 rejectfile,
                 dumpfile,
