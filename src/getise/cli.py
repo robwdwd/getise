@@ -39,17 +39,13 @@ def join_errors(messages):
     return ":".join(message["title"] for message in messages)
 
 
-def connect_ise(auth: tuple, headers: dict) -> requests.Session:
+def create_session(auth: tuple, headers: dict) -> requests.Session:
     """
-    Establishes a connection to the ISE server using the provided authentication and headers.
-
-    This function creates a new `requests.Session` object, sets the authentication credentials,
-    and updates the session headers with the provided values. It returns the configured session
-    ready for making requests to the ISE server.
+    Creates a session to use with ISE server API.
 
     Args:
-        auth (tuple): A tuple containing the authentication credentials.
-        headers (dict): A dictionary of headers to be included in the session.
+        auth (tuple): The authentication credentials.
+        headers (dict): Headers to be included in the session.
 
     Returns:
         requests.Session: A configured requests session for connecting to the ISE server.
@@ -61,9 +57,22 @@ def connect_ise(auth: tuple, headers: dict) -> requests.Session:
     return s
 
 
-def get_page(connection: requests.Session, url: str, page: int):
+def get_page(ise_session: requests.Session, url: str, page: int):
+    """Retrieve a page of results from the ISE server.
+
+    Args:
+        ise_session (requests.Session): The session object used to make the request.
+        url (str): The base URL of the ISE server.
+        page (int): The page number to retrieve.
+
+    Returns:
+        dict: The JSON response containing the results for the specified page.
+
+    Raises:
+        GetISEException: If there is an error in the request or if the response indicates a failure.
+    """
     try:
-        resp = connection.get(url, verify=False, params={"page": page, "size": 100})
+        resp = ise_session.get(url, verify=False, params={"page": page, "size": 100})
         resp.raise_for_status()
     except requests.exceptions.RequestException as err:
         raise GetISEException(f"Unable to get respose from the ISE server: {err}") from err
@@ -76,11 +85,24 @@ def get_page(connection: requests.Session, url: str, page: int):
     return resp.json()["SearchResult"]
 
 
-def get_device(connection: requests.Session, url: str, device_id: str):
+def get_device(ise_session: requests.Session, url: str, device_id: str):
+    """Retrieve single device information from the ISE server.
+
+    Args:
+        connection (requests.Session): The session object used to make the request.
+        url (str): The base URL of the ISE server.
+        device_id (str): The unique identifier of the device to retrieve.
+
+    Returns:
+        dict: The JSON response containing device information.
+
+    Raises:
+        GetISEException: If there is an error in the request or if the response indicates a failure.
+    """
     device_url = f"{url}/{device_id}"
 
     try:
-        resp = connection.get(device_url, verify=False)
+        resp = ise_session.get(device_url, verify=False)
         resp.raise_for_status()
     except requests.exceptions.RequestException as err:
         raise GetISEException(f"Unable to get respose from the ISE server: {err}") from err
@@ -98,6 +120,16 @@ def find_seedgroup_and_is_cpe(
     cpe_group_matches: dict[str, Pattern],
     groups: list,
 ):
+    """Determine the matching seed group name and if it is a CPE.
+
+    Args:
+        group_matches (dict[str, Pattern]): A dictionary of group names and their corresponding regex patterns.
+        cpe_group_matches (dict[str, Pattern]): A dictionary of CPE group names and their corresponding regex patterns.
+        groups (list): A list of group names to be checked against the patterns.
+
+    Returns:
+        tuple: A tuple containing the name of the matching group and a boolean indicating if it is a CPE group. Returns (None, False) if no match is found.
+    """
     for matches, is_cpe in [(cpe_group_matches, True), (group_matches, False)]:
         for group_name, pattern in matches.items():
             if any(pattern.match(g) for g in groups):
@@ -161,10 +193,7 @@ def do_device(
 
 def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe_seeds: dict) -> dict:
     """
-    Creates temporary seed files for both group and CPE seeds and returns a dictionary of their handles.
-
-    This function initializes temporary files for each seed in the provided group and CPE dictionaries,
-    storing relevant metadata such as file paths and whether the seed is a CPE list.
+    Creates temporary seed files and the paths to final seedfiles.
 
     Args:
         absolute_path (str): The absolute path where the temporary files will be created.
@@ -261,6 +290,14 @@ def close_seedfiles(gitseedfiles: dict):
 
 
 def compile_patterns(pattern_dict: dict[str, str]) -> dict[str, Pattern]:
+    """Compile a dictionary of string patterns into regex patterns.
+
+    Args:
+        pattern_dict (dict[str, str]): A dictionary of keys and their associated string patterns.
+
+    Returns:
+        dict[str, Pattern]: A dictionary mapping each key to its compiled regex pattern.
+    """
     return {key: re.compile("|".join(patterns)) for key, patterns in pattern_dict.items()}
 
 
@@ -292,25 +329,23 @@ def cli(**cli_args):
         ),  # Any hostname matching this doesn't need domain adding
     }
 
-    # Open the tacacs dump file
-    #
-    dumpfile = open(cfg["dumpfile"], "w")
-    rejectfile = open(cfg["rejectfile"], "w")
-
     # Open the raw seedfiles for writing
     #
     gitseedfiles = get_seedfiles(
         cfg["git"]["absolute_path"], cfg["git"]["relative_path"], cfg["groupseeds"], cfg["cpeseeds"]
     )
 
-    pp.pprint(gitseedfiles)
+    # Open the tacacs dump file
+    #
+    dumpfile = open(cfg["dumpfile"], "w")
+    rejectfile = open(cfg["rejectfile"], "w")
 
     try:
         url = cfg["ise"]["url"]
 
         # Open session to the ISE server.
         #
-        ise_session = connect_ise(
+        ise_session = create_session(
             (cfg["ise"]["user"], cfg["ise"]["password"]),
             {"Content-Type": "application/json", "Accept": "application/json"},
         )
@@ -358,6 +393,10 @@ def cli(**cli_args):
         raise SystemExit(f"Aborting due to error: {error}")
     finally:
         close_seedfiles(gitseedfiles)
+        rejectfile.flush()
+        dumpfile.flush()
+        rejectfile.close()
+        dumpfile.close()
         ise_session.close()
 
     sys.exit()
@@ -384,10 +423,3 @@ def cli(**cli_args):
         git_repo.index.commit("Get ISE Devices automated commit")
         origin.push()
         secondary.push()
-
-    # Clean up the logging.
-    #
-    rejectfile.flush()
-    dumpfile.flush()
-    rejectfile.close()
-    dumpfile.close()
