@@ -301,6 +301,59 @@ def compile_patterns(pattern_dict: dict[str, str]) -> dict[str, Pattern]:
     return {key: re.compile("|".join(patterns)) for key, patterns in pattern_dict.items()}
 
 
+def update_git(cfg, gitseedfiles):
+    git_repo = Repo(cfg["git"]["basedir"])
+    origin = git_repo.remotes["origin"]
+    secondary = git_repo.remotes["secondary"]
+    origin.pull()
+    for git_file in gitseedfiles:
+        git_repo.index.add([gitseedfiles[git_file]["file_relative"]])
+    if git_repo.is_dirty():
+        git_repo.index.commit("Get ISE Devices automated commit")
+        origin.push()
+        secondary.push()
+
+
+def get_ise_data(
+    ise_session: requests.Session,
+    url: str,
+    cfg: dict,
+    device_regex: dict[str, Pattern],
+    group_matches: dict[str, Pattern],
+    cpe_group_matches: dict[str, Pattern],
+    gitseedfiles: dict,
+    rejectfile: TextIOWrapper,
+    dumpfile: TextIOWrapper,
+):
+    page = 1
+    result = get_page(ise_session, url, page)
+    while "nextPage" in result:
+        for device in result["resources"]:
+            do_device(
+                get_device(ise_session, url, device["id"]),
+                cfg,
+                device_regex,
+                group_matches,
+                cpe_group_matches,
+                gitseedfiles,
+                rejectfile,
+                dumpfile,
+            )
+        page += 1
+        result = get_page(ise_session, url, page)
+    for device in result["resources"]:
+        do_device(
+            get_device(ise_session, url, device["id"]),
+            cfg,
+            device_regex,
+            group_matches,
+            cpe_group_matches,
+            gitseedfiles,
+            rejectfile,
+            dumpfile,
+        )
+
+
 @click.command()
 @click.option(
     "--config",
@@ -335,48 +388,16 @@ def cli(**cli_args):
         cfg["git"]["absolute_path"], cfg["git"]["relative_path"], cfg["groupseeds"], cfg["cpeseeds"]
     )
 
-    # Open the tacacs dump file
-    #
-    dumpfile = open(cfg["dumpfile"], "w")
-    rejectfile = open(cfg["rejectfile"], "w")
+    with open(cfg["dumpfile"], "w") as dumpfile, open(cfg["rejectfile"], "w") as rejectfile:
+        try:
+            ise_session = create_session(
+                (cfg["ise"]["user"], cfg["ise"]["password"]),
+                {"Content-Type": "application/json", "Accept": "application/json"},
+            )
 
-    try:
-        url = cfg["ise"]["url"]
-
-        # Open session to the ISE server.
-        #
-        ise_session = create_session(
-            (cfg["ise"]["user"], cfg["ise"]["password"]),
-            {"Content-Type": "application/json", "Accept": "application/json"},
-        )
-
-        # Get the first page of results.
-        #
-        page = 1
-        result = get_page(ise_session, url, page)
-
-        # If there is a nextPage then continue round the loop
-        #
-        while "nextPage" in result:
-            for device in result["resources"]:
-                do_device(
-                    get_device(ise_session, url, device["id"]),
-                    cfg,
-                    device_regex,
-                    group_matches,
-                    cpe_group_matches,
-                    gitseedfiles,
-                    rejectfile,
-                    dumpfile,
-                )
-
-            page = page + 1
-            result = get_page(ise_session, url, page)
-
-        # Finally catch the last page of results.
-        for device in result["resources"]:
-            do_device(
-                get_device(ise_session, url, device["id"]),
+            get_ise_data(
+                ise_session,
+                cfg["ise"]["url"],
                 cfg,
                 device_regex,
                 group_matches,
@@ -386,40 +407,14 @@ def cli(**cli_args):
                 dumpfile,
             )
 
-        process_seedfiles(gitseedfiles)
+            process_seedfiles(gitseedfiles)
 
-    except GetISEException as error:
-        time.sleep(30)
-        raise SystemExit(f"Aborting due to error: {error}")
-    finally:
-        close_seedfiles(gitseedfiles)
-        rejectfile.flush()
-        dumpfile.flush()
-        rejectfile.close()
-        dumpfile.close()
-        ise_session.close()
+        except GetISEException as error:
+            raise SystemExit(f"Aborting due to error: {error}")
+        finally:
+            close_seedfiles(gitseedfiles)
+            ise_session.close()
 
     sys.exit()
 
-    # Create Git repository object.
-    #
-    git_repo = Repo(cfg["git"]["basedir"])
-
-    # Pull in updates from the repository to make sure we are
-    # up-to-date with everything.
-    #
-    origin = git_repo.remotes["origin"]
-    secondary = git_repo.remotes["secondary"]
-    origin.pull()
-
-    # Stage the file in git.
-    #
-    for git_file in gitseedfiles:
-        git_repo.index.add([gitseedfiles[git_file]["file_relative"]])
-
-    # If we have changed files then stage and push them.
-    #
-    if git_repo.is_dirty():
-        git_repo.index.commit("Get ISE Devices automated commit")
-        origin.push()
-        secondary.push()
+    update_git()
