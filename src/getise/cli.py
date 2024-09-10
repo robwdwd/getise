@@ -60,8 +60,6 @@ def connect_ise(auth: tuple, headers: dict) -> requests.Session:
     return s
 
 
-# Get 1 page of devices from the ISE
-#
 def get_page(connection: requests.Session, url: str, page: int):
     try:
         resp = connection.get(url, verify=False, params={"page": page, "size": 100})
@@ -77,8 +75,6 @@ def get_page(connection: requests.Session, url: str, page: int):
     return resp.json()["SearchResult"]
 
 
-# Get a single device from the ISE
-#
 def get_device(connection: requests.Session, url: str, device_id: str):
     device_url = f"{url}/{device_id}"
 
@@ -96,73 +92,57 @@ def get_device(connection: requests.Session, url: str, device_id: str):
     return resp.json()
 
 
-# Work out which seedfile the device belongs too or reject it.
-#
+def find_seedgroup_and_is_cpe(
+    matchgroups: dict[str, Pattern],
+    matchcpe: dict[str, Pattern],
+    groups: list,
+):
+    for cm_re, pattern in matchcpe.items():
+        if any(pattern.match(g) for g in groups):
+            return cm_re, True
+    for gm_re, pattern in matchgroups.items():
+        if any(pattern.match(g) for g in groups):
+            return gm_re, False
+    return None, False
+
 def do_device(
     device,
     cfg,
     device_re: dict[str, Pattern],
-    matchgroups: dict,
-    matchcpe: dict,
+    matchgroups: dict[str, Pattern],
+    matchcpe: dict[str, Pattern],
     gitseedfiles: dict,
     rejectfile: TextIOWrapper,
     dumpfile: TextIOWrapper,
 ):
-    if "NetworkDevice" in device:
-        device = device["NetworkDevice"]
-    else:
+    if "NetworkDevice" not in device:
         return
 
+    device = device["NetworkDevice"]
+
     hostname = device["name"].lower()
-    groups = []
-    ipaddress = []
-    seedgroup = None
-    is_cpe = False
 
     if device_re["skiphosts"].match(hostname):
         rejectfile.write(f"SKIPPED: [{hostname}] : Hostname matches skip host RE.\n")
         return
 
-    for group in device["NetworkDeviceGroupList"]:
-        if group.find("Colt_NDGs") != -1:
-            groups.extend(group.split("#"))
+    groups = [item for group in device["NetworkDeviceGroupList"] if "Colt_NDGs" in group for item in group.split("#")]
+    ipaddress = [ipaddr["ipaddress"] for ipaddr in device["NetworkDeviceIPList"]]
 
     if any(device_re["skipgroups"].match(g) for g in groups):
         rejectfile.write(f"SKIPPED: [{hostname}] : {groups} : Matches skip RE.\n")
         return
 
-    for cm_re in matchcpe:
-        if any(matchcpe[cm_re].match(g) for g in groups):
-            seedgroup = cm_re
-            is_cpe = True
-            break
-
-    if not is_cpe:
-        for gm_re in matchgroups:
-            if any(matchgroups[gm_re].match(g) for g in groups):
-                if not device_re["domaincheck"].match(hostname):
-                    hostname = hostname + "." + cfg["groupdomains"][gm_re]
-                seedgroup = gm_re
-                break
+    seedgroup, is_cpe = find_seedgroup_and_is_cpe(matchgroups, matchcpe, groups)
 
     if not seedgroup:
         rejectfile.write(f"REJECTED: [{hostname}] : {groups} : Group match not found.\n")
         return
+    
+    if not is_cpe and not device_re["domaincheck"].match(hostname):
+        hostname += "." + cfg["groupdomains"][seedgroup]
 
-    for ipaddr in device["NetworkDeviceIPList"]:
-        ipaddress.append(ipaddr["ipaddress"])
-
-    dumpfile.write(
-        "hostname: "
-        + hostname
-        + ", ipaddresses: "
-        + str(ipaddress)
-        + ", groups: "
-        + str(groups)
-        + ", seedgroup: "
-        + seedgroup
-        + "\n"
-    )
+    dumpfile.write(f"hostname: {hostname}, ipaddresses: {ipaddress}, groups: {groups}, seedgroup: {seedgroup}\n")
 
     if is_cpe:
         for ip_range in ipaddress:
@@ -171,18 +151,10 @@ def do_device(
                 continue
             dumpfile.write(f"hostname: {hostname}, Found iprange: {ip_range}\n")
             ip_range_cidrs = IPGlob(ip_range).cidrs()
-            dumpfile.write(
-                "hostname: "
-                + hostname
-                + ", Converting iprange: "
-                + str(ip_range)
-                + ", cidrs: "
-                + str(ip_range_cidrs)
-                + "\n"
-            )
+            dumpfile.write(f"hostname: {hostname}, Converting iprange: {ip_range}, cidrs: {ip_range_cidrs}\n")
 
             for cidr in ip_range_cidrs:
-                gitseedfiles[seedgroup]["handle"].write(str(cidr) + "\n")
+                gitseedfiles[seedgroup]["handle"].write(f"{cidr}\n")
     else:
         gitseedfiles[seedgroup]["handle"].write(f"{hostname}\n")
 
@@ -221,10 +193,8 @@ def get_seedfiles(absolute_path: str, relative_path: str, group_seeds: dict, cpe
 
 def sort_cpe_file(source_file: tempfile._TemporaryFileWrapper, destination_filename: str):
     """
-    Sorts IP address ranges from a source file and writes the sorted ranges to a destination file.
-
-    This function reads IP address ranges from a temporary source file, processes them to merge
-    overlapping ranges, and writes the sorted results to a specified destination file.
+    Sorts IP address ranges from the temporary source file, processes them to merge
+    overlapping ranges, and writes the sorted results to the specified destination file.
 
     Args:
         source_file (tempfile._TemporaryFileWrapper): A temporary file object containing IP address ranges.
@@ -402,6 +372,7 @@ def cli(**cli_args):
         raise SystemExit(f"Aborting due to error: {error}")
     finally:
         close_seedfiles(gitseedfiles)
+        ise_session.close()
 
     sys.exit()
 
@@ -427,8 +398,6 @@ def cli(**cli_args):
         git_repo.index.commit("Get ISE Devices automated commit")
         origin.push()
         secondary.push()
-
-    ise_session.close()
 
     # Clean up the logging.
     #
