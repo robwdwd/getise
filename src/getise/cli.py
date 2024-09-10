@@ -18,6 +18,7 @@ import time
 from io import TextIOWrapper
 from json import JSONDecodeError
 from re import Pattern
+from typing import Dict
 
 import click
 import requests
@@ -103,6 +104,7 @@ def find_seedgroup_and_is_cpe(
                 return group_name, is_cpe
     return None, False
 
+
 def do_device(
     device,
     cfg,
@@ -136,7 +138,7 @@ def do_device(
     if not seedgroup:
         rejectfile.write(f"REJECTED: [{hostname}] : {groups} : Group match not found.\n")
         return
-    
+
     if not is_cpe and not device_re["domaincheck"].match(hostname):
         hostname += "." + cfg["groupdomains"][seedgroup]
 
@@ -258,6 +260,10 @@ def close_seedfiles(gitseedfiles: dict):
         file_info["handle"].close()
 
 
+def compile_patterns(pattern_dict: dict[str, str]) -> dict[str, Pattern]:
+    return {key: re.compile("|".join(patterns)) for key, patterns in pattern_dict.items()}
+
+
 @click.command()
 @click.option(
     "--config",
@@ -274,36 +280,17 @@ def cli(**cli_args):
     except JSONDecodeError as err:
         raise SystemExit(f"Unable to parse configuration file: {err}") from err
 
-    group_matches: dict[str, Pattern] = {}
-    cpe_group_matches: dict[str, Pattern] = {}
+    group_matches: dict[str, Pattern] = compile_patterns(cfg["groupmatches"])
+    cpe_group_matches: dict[str, Pattern] = compile_patterns(cfg["cpematches"])
 
-    # Join and compile the regular expressions from the group matches
-    #
-    for gm in cfg["groupmatches"]:
-        group_matches[gm] = re.compile("|".join(cfg["groupmatches"][gm]))
-
-    # Group matches for CPE entries are seperate from the other groups.
-    #
-    for cm in cfg["cpematches"]:
-        cpe_group_matches[cm] = re.compile("|".join(cfg["cpematches"][cm]))
-
-    device_regex: dict[str, Pattern] = {}
-    # Device groups to ignore.
-    #
-    device_regex["skipgroups"] = re.compile("|".join(cfg["skipgroups"]))
-
-    # Hostnames to ignore.
-    #
-    device_regex["skiphosts"] = re.compile("|".join(cfg["skiphosts"]))
-
-    # Skip IP ranges in CPE devices.
-    #
-    device_regex["skipcpe"] = re.compile("|".join(cfg["skipcpe"]))
-
-    # Any host that does have a domain ending to the hostname doesn't need another one
-    # Matching domains are here so we know if there is one or not.
-    #
-    device_regex["domaincheck"] = re.compile("|".join(cfg["domaincheck"]))
+    device_regex: dict[str, Pattern] = {
+        "skipgroups": re.compile("|".join(cfg["skipgroups"])),  # Groups to skip
+        "skiphosts": re.compile("|".join(cfg["skiphosts"])),  # Hostnames to skip
+        "skipcpe": re.compile("|".join(cfg["skipcpe"])),  # CPE IP Ranges to skip
+        "domaincheck": re.compile(
+            "|".join(cfg["domaincheck"])
+        ),  # Any hostname matching this doesn't need domain adding
+    }
 
     # Open the tacacs dump file
     #
