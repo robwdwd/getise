@@ -97,12 +97,10 @@ def find_seedgroup_and_is_cpe(
     cpe_group_matches: dict[str, Pattern],
     groups: list,
 ):
-    for cpe_group_name, pattern in cpe_group_matches.items():
-        if any(pattern.match(g) for g in groups):
-            return cpe_group_name, True
-    for group_name, pattern in group_matches.items():
-        if any(pattern.match(g) for g in groups):
-            return group_name, False
+    for matches, is_cpe in [(cpe_group_matches, True), (group_matches, False)]:
+        for group_name, pattern in matches.items():
+            if any(pattern.match(g) for g in groups):
+                return group_name, is_cpe
     return None, False
 
 def do_device(
