@@ -14,11 +14,9 @@ import re
 import shutil
 import sys
 import tempfile
-import time
 from io import TextIOWrapper
 from json import JSONDecodeError
 from re import Pattern
-from typing import Dict
 
 import click
 import requests
@@ -139,7 +137,7 @@ def find_seedgroup_and_is_cpe(
 
 def do_device(
     device,
-    cfg,
+    group_domains: dict[str, str],
     device_re: dict[str, Pattern],
     group_matches: dict[str, Pattern],
     cpe_group_matches: dict[str, Pattern],
@@ -172,7 +170,7 @@ def do_device(
         return
 
     if not is_cpe and not device_re["domaincheck"].match(hostname):
-        hostname += "." + cfg["groupdomains"][seedgroup]
+        hostname += f".{group_domains[seedgroup]}"
 
     dumpfile.write(f"hostname: {hostname}, ipaddresses: {ipaddress}, groups: {groups}, seedgroup: {seedgroup}\n")
 
@@ -317,7 +315,7 @@ def update_git(cfg, gitseedfiles):
 def get_ise_data(
     ise_session: requests.Session,
     url: str,
-    cfg: dict,
+    group_domains: dict[str, str],
     device_regex: dict[str, Pattern],
     group_matches: dict[str, Pattern],
     cpe_group_matches: dict[str, Pattern],
@@ -327,11 +325,12 @@ def get_ise_data(
 ):
     page = 1
     result = get_page(ise_session, url, page)
+
     while "nextPage" in result:
         for device in result["resources"]:
             do_device(
                 get_device(ise_session, url, device["id"]),
-                cfg,
+                group_domains,
                 device_regex,
                 group_matches,
                 cpe_group_matches,
@@ -341,10 +340,11 @@ def get_ise_data(
             )
         page += 1
         result = get_page(ise_session, url, page)
+
     for device in result["resources"]:
         do_device(
             get_device(ise_session, url, device["id"]),
-            cfg,
+            group_domains,
             device_regex,
             group_matches,
             cpe_group_matches,
@@ -354,21 +354,25 @@ def get_ise_data(
         )
 
 
+def load_config(config_file):
+    try:
+        return json.load(config_file)
+    except JSONDecodeError as err:
+        raise SystemExit(f"Unable to parse configuration file: {err}") from err
+
+
 @click.command()
 @click.option(
     "--config",
     metavar="CONFIG_FILE",
     help="Configuaration file to load.",
-    default=os.environ["HOME"] + "/.config/getise/config.json",
+    default=os.path.join(os.environ["HOME"], ".config", "getise", "config.json"),
     envvar="GETISE_CONFIG_FILE",
     type=click.File(mode="r"),
 )
 def cli(**cli_args):
 
-    try:
-        cfg = json.load(cli_args["config"])
-    except JSONDecodeError as err:
-        raise SystemExit(f"Unable to parse configuration file: {err}") from err
+    cfg = load_config(cli_args["config"])
 
     group_matches: dict[str, Pattern] = compile_patterns(cfg["groupmatches"])
     cpe_group_matches: dict[str, Pattern] = compile_patterns(cfg["cpematches"])
@@ -398,7 +402,7 @@ def cli(**cli_args):
             get_ise_data(
                 ise_session,
                 cfg["ise"]["url"],
-                cfg,
+                cfg["groupdomains"],
                 device_regex,
                 group_matches,
                 cpe_group_matches,
@@ -410,7 +414,7 @@ def cli(**cli_args):
             process_seedfiles(gitseedfiles)
 
         except GetISEException as error:
-            raise SystemExit(f"Aborting due to error: {error}")
+            raise SystemExit(f"Aborting due to error: {error}") from error
         finally:
             close_seedfiles(gitseedfiles)
             ise_session.close()
