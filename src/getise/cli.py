@@ -33,7 +33,16 @@ requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 pp = pprint.PrettyPrinter(indent=4)
 
 
-def join_errors(messages):
+def join_errors(messages: list) -> str:
+    """Join error messages into a single string.
+
+    Args:
+        messages (list): A list of dictionaries, each containing an error message
+            with a "title" key.
+
+    Returns:
+        str: Joined error string.
+    """
     return ":".join(message["title"] for message in messages)
 
 
@@ -66,6 +75,20 @@ def get_ise_data(
     rejectfile: TextIOWrapper,
     dumpfile: TextIOWrapper,
 ):
+    """Retrieve and process device data from the ISE API.
+
+    Args:
+        ise_session (requests.Session): The session object used to make API requests.
+        url (str): The base URL for the ISE API.
+        group_domains (dict[str, str]): A mapping of group domains.
+        device_regex (dict[str, Pattern]): Regular expressions for device matching.
+        group_matches (dict[str, Pattern]): Patterns for group matching.
+        cpe_group_matches (dict[str, Pattern]): Patterns for CPE group matching.
+        gitseedfiles (dict): A dictionary of Git seed files.
+        rejectfile (TextIOWrapper): A file-like object for logging rejected devices.
+        dumpfile (TextIOWrapper): A file-like object for dumping processed device data.
+
+    """
     page = 1
     result = get_page(ise_session, url, page)
 
@@ -192,14 +215,17 @@ def do_device(
         return
 
     device = device["NetworkDevice"]
-
     hostname = device["name"].lower()
 
     if device_re["skiphosts"].match(hostname):
         rejectfile.write(f"SKIPPED: [{hostname}] : Hostname matches skip host RE.\n")
         return
 
-    groups = [item for group in device["NetworkDeviceGroupList"] if "Colt_NDGs" in group for item in group.split("#")]
+    groups = []
+    for group in device["NetworkDeviceGroupList"]:
+        if "Colt_NDGs" in group:
+            groups.extend(group.split("#"))
+
     ipaddress = [ipaddr["ipaddress"] for ipaddr in device["NetworkDeviceIPList"]]
 
     if any(device_re["skipgroups"].match(g) for g in groups):
@@ -342,13 +368,22 @@ def compile_patterns(pattern_dict: dict[str, str]) -> dict[str, Pattern]:
     return {key: re.compile("|".join(patterns)) for key, patterns in pattern_dict.items()}
 
 
-def update_git(cfg, gitseedfiles):
-    git_repo = Repo(cfg["git"]["basedir"])
+def update_git(base_dir: str, gitseedfiles: dict):
+    """Update the Git repository with new files from the specified directory.
+
+    Args:
+        base_dir (str): The base directory of the Git repository.
+        gitseedfiles (dict): A dictionary containing file information.
+
+    """
+    git_repo = Repo(base_dir)
     origin = git_repo.remotes["origin"]
     secondary = git_repo.remotes["secondary"]
     origin.pull()
-    for git_file in gitseedfiles:
-        git_repo.index.add([gitseedfiles[git_file]["file_relative"]])
+
+    file_paths = [details["file_relative"] for details in gitseedfiles.values()]
+    git_repo.index.add(file_paths)
+
     if git_repo.is_dirty():
         git_repo.index.commit("Get ISE Devices automated commit")
         origin.push()
@@ -420,6 +455,4 @@ def cli(**cli_args):
             close_seedfiles(gitseedfiles)
             ise_session.close()
 
-    sys.exit()
-
-    update_git()
+    update_git(cfg["git"]["basedir"], gitseedfiles)
