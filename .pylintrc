@@ -7,6 +7,6 @@ disable=C0111,E0211,I0011,R0914,R0912,R0915,R0913,R0904
 ignored-modules=distutils,eventlet.green.subprocess
 
 [FORMAT]
-max-line-length=160
+max-line-length=120
 max-module-lines=1000
 indent-string='    '

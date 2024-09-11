@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "getise"
-version = "1.0.3"
-description = "Get networks from Cisco ISE"
+version = "2.0.0"
+description = "Get networks and devices from Cisco ISE"
 authors = ["Rob Woodward <rob@emailplus.org>"]
 
 license = "BSD-2-Clause"

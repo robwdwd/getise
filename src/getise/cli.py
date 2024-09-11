@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2023, Rob Woodward. All rights reserved.
+# Copyright (c), Rob Woodward. All rights reserved.
 #
 # This file is part of Get ISE tool and is released under the
 # "BSD 2-Clause License". Please see the LICENSE file that should
@@ -53,6 +53,48 @@ def create_session(auth: tuple, headers: dict) -> requests.Session:
     s.headers.update(headers)
 
     return s
+
+
+def get_ise_data(
+    ise_session: requests.Session,
+    url: str,
+    group_domains: dict[str, str],
+    device_regex: dict[str, Pattern],
+    group_matches: dict[str, Pattern],
+    cpe_group_matches: dict[str, Pattern],
+    gitseedfiles: dict,
+    rejectfile: TextIOWrapper,
+    dumpfile: TextIOWrapper,
+):
+    page = 1
+    result = get_page(ise_session, url, page)
+
+    while "nextPage" in result:
+        for device in result["resources"]:
+            do_device(
+                get_device(ise_session, url, device["id"]),
+                group_domains,
+                device_regex,
+                group_matches,
+                cpe_group_matches,
+                gitseedfiles,
+                rejectfile,
+                dumpfile,
+            )
+        page += 1
+        result = get_page(ise_session, url, page)
+
+    for device in result["resources"]:
+        do_device(
+            get_device(ise_session, url, device["id"]),
+            group_domains,
+            device_regex,
+            group_matches,
+            cpe_group_matches,
+            gitseedfiles,
+            rejectfile,
+            dumpfile,
+        )
 
 
 def get_page(ise_session: requests.Session, url: str, page: int):
@@ -126,7 +168,8 @@ def find_seedgroup_and_is_cpe(
         groups (list): A list of group names to be checked against the patterns.
 
     Returns:
-        tuple: A tuple containing the name of the matching group and a boolean indicating if it is a CPE group. Returns (None, False) if no match is found.
+        tuple: A tuple containing the name of the matching group and a boolean indicating if it is a CPE group.
+               Returns (None, False) if no match is found.
     """
     for matches, is_cpe in [(cpe_group_matches, True), (group_matches, False)]:
         for group_name, pattern in matches.items():
@@ -310,48 +353,6 @@ def update_git(cfg, gitseedfiles):
         git_repo.index.commit("Get ISE Devices automated commit")
         origin.push()
         secondary.push()
-
-
-def get_ise_data(
-    ise_session: requests.Session,
-    url: str,
-    group_domains: dict[str, str],
-    device_regex: dict[str, Pattern],
-    group_matches: dict[str, Pattern],
-    cpe_group_matches: dict[str, Pattern],
-    gitseedfiles: dict,
-    rejectfile: TextIOWrapper,
-    dumpfile: TextIOWrapper,
-):
-    page = 1
-    result = get_page(ise_session, url, page)
-
-    while "nextPage" in result:
-        for device in result["resources"]:
-            do_device(
-                get_device(ise_session, url, device["id"]),
-                group_domains,
-                device_regex,
-                group_matches,
-                cpe_group_matches,
-                gitseedfiles,
-                rejectfile,
-                dumpfile,
-            )
-        page += 1
-        result = get_page(ise_session, url, page)
-
-    for device in result["resources"]:
-        do_device(
-            get_device(ise_session, url, device["id"]),
-            group_domains,
-            device_regex,
-            group_matches,
-            cpe_group_matches,
-            gitseedfiles,
-            rejectfile,
-            dumpfile,
-        )
 
 
 def load_config(config_file):
